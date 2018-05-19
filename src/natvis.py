@@ -6,6 +6,12 @@ from xml.etree import ElementTree
 from xml.etree.ElementTree import Element
 
 import logger
+import templates
+
+
+class NatvisException(Exception):
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
 
 
 def lookahead_iter(content: str, lookahead: int) -> Iterator[Tuple[str, str]]:
@@ -156,8 +162,9 @@ class NatvisType:
     def __init__(self, element: Element) -> None:
         super().__init__()
 
-        self.name = element.get("Name")
-        self.name_regex = re.compile("^" + re.escape(self.name).replace("\\*", ".+") + "$")
+        name = element.get("Name")
+        self.template_type = templates.parse_template_type(name)
+
         self.display_parsers = []
         self.expand_items = None
 
@@ -182,11 +189,8 @@ class NatvisType:
             if child.tag == "Item":
                 self._parse_item_element(child)
 
-    def typename_matches(self, typename) -> bool:
-        if self.name_regex.match(typename):
-            return True
-        else:
-            return False
+    def typename_matches(self, typename: templates.TemplateType) -> bool:
+        return self.template_type.matches(typename)
 
 
 def remove_namespace(doc, namespace):
@@ -258,7 +262,7 @@ class NatvisManager:
         for type in doc.types:
             self.loaded_types.append(type)
 
-    def lookup_type(self, typename: str, filename: str = None) -> Optional[NatvisType]:
+    def lookup_type(self, typename: templates.TemplateType, filename: str = None) -> Optional[NatvisType]:
         if typename in self.unknown_types:
             # Quickly return if we know we won't find this type
             return None

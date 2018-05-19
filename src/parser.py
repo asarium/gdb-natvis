@@ -90,10 +90,7 @@ try:
                 else:
                     return None
             elif expr_cursor.kind == CursorKind.CXX_BOOL_LITERAL_EXPR:
-                if self.get_cursor_text(expr_cursor) == "true":
-                    return True
-                else:
-                    return False
+                return self.get_cursor_text(expr_cursor) == "true"
             elif expr_cursor.kind == CursorKind.FLOATING_LITERAL:
                 val = self.get_cursor_text(expr_cursor)
                 if val[-1] == "f":

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+    <Type Name="util::RandomRange&lt;float,*,*&gt;">
+        <DisplayString>test</DisplayString>
+    </Type>
+    <Type Name="util::RandomRange&lt;*,*,*&gt;">
+        <DisplayString>test</DisplayString>
+    </Type>
+</AutoVisualizer>
+

@@ -1,7 +1,6 @@
 import os
 import unittest
 
-import parser
 from natvis import NatvisDocument, DisplayStringParser, FormatSpecifiers, NatvisManager
 
 
@@ -79,7 +78,7 @@ class NatvisTestCase(unittest.TestCase):
                 print("  " + repr(parser))
 
     def test_glm_parsing(self):
-        path = os.path.join(os.path.dirname(__file__), "glm.natvis")
+        path = os.path.join(os.path.dirname(__file__), "data", "glm.natvis")
 
         doc = NatvisDocument.parse_file(path)
 
@@ -88,7 +87,7 @@ class NatvisTestCase(unittest.TestCase):
         self.print_document(doc)
 
     def test_gsl_parsing(self):
-        path = os.path.join(os.path.dirname(__file__), "GSL.natvis")
+        path = os.path.join(os.path.dirname(__file__), "data", "GSL.natvis")
 
         doc = NatvisDocument.parse_file(path)
 
@@ -97,7 +96,16 @@ class NatvisTestCase(unittest.TestCase):
         self.print_document(doc)
 
     def test_lua_parsing(self):
-        path = os.path.join(os.path.dirname(__file__), "lua.natvis")
+        path = os.path.join(os.path.dirname(__file__), "data", "lua.natvis")
+
+        doc = NatvisDocument.parse_file(path)
+
+        self.assertEqual(len(doc.types), 10)
+
+        self.print_document(doc)
+
+    def test_template_parsing(self):
+        path = os.path.join(os.path.dirname(__file__), "data", "template.natvis")
 
         doc = NatvisDocument.parse_file(path)
 
@@ -110,7 +118,7 @@ class NatvisManagerTestCase(unittest.TestCase):
     def test_lookup_type(self):
         manager = NatvisManager()
 
-        manager.load_natvis_file(os.path.join(os.path.dirname(__file__), "glm.natvis"))
+        manager.load_natvis_file(os.path.join(os.path.dirname(__file__), "data", "glm.natvis"))
 
         self.assertIsNotNone(manager.lookup_type("glm::tvec1<float>"))
         self.assertIsNotNone(manager.lookup_type("glm::tvec1<int>"))
@@ -125,15 +133,3 @@ class NatvisManagerTestCase(unittest.TestCase):
         self.assertIsNotNone(manager.lookup_type("glm::tvec4<int>"))
 
         self.assertIsNone(manager.lookup_type("lua_State"))
-
-
-class ParserTestCase(unittest.TestCase):
-    def test_parser(self):
-        manager = NatvisManager()
-
-        manager.load_natvis_file(os.path.join(os.path.dirname(__file__), "lua.natvis"))
-
-        for type in manager.loaded_types:
-            for display in type.display_parsers:
-                for part in display.parser.code_parts:
-                    parser.evaluate_expression(part.base_expression)

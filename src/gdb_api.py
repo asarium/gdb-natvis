@@ -1,6 +1,5 @@
 import os
-import sys
-from typing import Tuple
+from typing import Tuple, Iterable
 
 import gdb
 import gdb.printing
@@ -9,6 +8,7 @@ from gdb.printing import PrettyPrinter
 
 import natvis
 import parser
+from templates import TemplateType
 
 
 def format_type(type, force_name: str = None) -> Tuple[str, str]:
@@ -73,6 +73,9 @@ class NatvisPrinter:
             return "{" + expression + "}"
 
     def children(self):
+        if self.type.expand_items is None:
+            return
+
         for item in self.type.expand_items:
             if self.check_condition(item.condition):
                 yield item.name, self._get_value(item.expression.base_expression)
@@ -88,31 +91,85 @@ class NatvisPrinter:
         return "No visualizer available"
 
 
+def template_arg_to_string(arg) -> str:
+    if isinstance(arg, gdb.Type):
+        return arg.name
+    else:
+        return str(arg)
+
+
+def get_template_args(type) -> Iterable[TemplateType]:
+    index = 0
+    while True:
+        try:
+            yield gdb_to_template_type(type.template_argument(index))
+        except:
+            break
+
+        index += 1
+
+
+def gdb_to_template_type(type):
+    type_name = template_arg_to_string(type)
+    template_index = type_name.find("<")
+    if template_index != -1:
+        type_name = type_name[:template_index]
+
+    return TemplateType(type_name, list(get_template_args(type)))
+
+
+def strip_references(val):
+    """
+    Removes all types of references off of val. The result is a value with a non-pointer or reference type and a value of
+    the same type
+    :param val: The value to process
+    :return: The basic value, the unqualified type of that value
+    """
+    while val.type.code == gdb.TYPE_CODE_REF or val.type.code == gdb.TYPE_CODE_RVALUE_REF or val.type.code == gdb.TYPE_CODE_PTR:
+        val = val.referenced_value()
+    return val, val.type.unqualified()
+
+
+def strip_typedefs(type):
+    """
+    Strips typedefs off the type until the basic type is found or until the target has no name
+    This is needed since natvis operates on type names.
+    :param type: The type to strip typedefs off of
+    :return: The basic type
+    """
+    while type.code == gdb.TYPE_CODE_TYPEDEF and type.target().name is not None:
+        type = type.target()
+    return type
+
+
 class NatvisPrettyPrinter(PrettyPrinter):
     def __init__(self, name, subprinters=None):
         super().__init__(name, subprinters)
         self.manager = natvis.NatvisManager()
 
     def __call__(self, val):
-        type = gdb.types.get_basic_type(val.type)
-        if not type:
-            type = val.type
-        if not type:
+        val, val_type = strip_references(val)
+        val_type = strip_typedefs(val_type)
+        if not val_type:
             return None
-        if type.name is None:
+        if val_type.name is None:
             # We can't handle unnamed types
             return None
 
-        symbol = gdb.lookup_symbol(type.name)
+        val_type = gdb.types.get_basic_type(val_type)
+
+        symbol = gdb.lookup_symbol(val_type.name)
 
         if symbol is None:
             return None
+
+        template_type = gdb_to_template_type(val_type)
 
         symbtab = symbol[0].symtab
 
         filename = symbtab.filename
 
-        natvis_type = self.manager.lookup_type(type.name, filename)
+        natvis_type = self.manager.lookup_type(template_type, filename)
 
         if natvis_type is None:
             return None
