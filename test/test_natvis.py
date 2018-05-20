@@ -1,6 +1,7 @@
 import os
 import unittest
 
+import templates
 from natvis import NatvisDocument, DisplayStringParser, FormatSpecifiers, NatvisManager
 
 
@@ -73,7 +74,7 @@ class DisplayStringParserTestCase(unittest.TestCase):
 class NatvisTestCase(unittest.TestCase):
     def print_document(self, doc: NatvisDocument):
         for type in doc.types:
-            print(type.name + ":")
+            print(str(type.template_type) + ":")
             for parser in type.display_parsers:
                 print("  " + repr(parser))
 
@@ -84,16 +85,12 @@ class NatvisTestCase(unittest.TestCase):
 
         self.assertEqual(len(doc.types), 6)
 
-        self.print_document(doc)
-
     def test_gsl_parsing(self):
         path = os.path.join(os.path.dirname(__file__), "data", "GSL.natvis")
 
         doc = NatvisDocument.parse_file(path)
 
         self.assertEqual(len(doc.types), 9)
-
-        self.print_document(doc)
 
     def test_lua_parsing(self):
         path = os.path.join(os.path.dirname(__file__), "data", "lua.natvis")
@@ -102,17 +99,6 @@ class NatvisTestCase(unittest.TestCase):
 
         self.assertEqual(len(doc.types), 10)
 
-        self.print_document(doc)
-
-    def test_template_parsing(self):
-        path = os.path.join(os.path.dirname(__file__), "data", "template.natvis")
-
-        doc = NatvisDocument.parse_file(path)
-
-        self.assertEqual(len(doc.types), 10)
-
-        self.print_document(doc)
-
 
 class NatvisManagerTestCase(unittest.TestCase):
     def test_lookup_type(self):
@@ -120,16 +106,16 @@ class NatvisManagerTestCase(unittest.TestCase):
 
         manager.load_natvis_file(os.path.join(os.path.dirname(__file__), "data", "glm.natvis"))
 
-        self.assertIsNotNone(manager.lookup_type("glm::tvec1<float>"))
-        self.assertIsNotNone(manager.lookup_type("glm::tvec1<int>"))
+        self.assertIsNotNone(manager.lookup_type(templates.parse_template_type("glm::tvec1<float>")))
+        self.assertIsNotNone(manager.lookup_type(templates.parse_template_type("glm::tvec1<int>")))
 
-        self.assertIsNotNone(manager.lookup_type("glm::tvec2<float>"))
-        self.assertIsNotNone(manager.lookup_type("glm::tvec2<int>"))
+        self.assertIsNotNone(manager.lookup_type(templates.parse_template_type("glm::tvec2<float>")))
+        self.assertIsNotNone(manager.lookup_type(templates.parse_template_type("glm::tvec2<int>")))
 
-        self.assertIsNotNone(manager.lookup_type("glm::tvec3<float>"))
-        self.assertIsNotNone(manager.lookup_type("glm::tvec3<int>"))
+        self.assertIsNotNone(manager.lookup_type(templates.parse_template_type("glm::tvec3<float>")))
+        self.assertIsNotNone(manager.lookup_type(templates.parse_template_type("glm::tvec3<int>")))
 
-        self.assertIsNotNone(manager.lookup_type("glm::tvec4<float>"))
-        self.assertIsNotNone(manager.lookup_type("glm::tvec4<int>"))
+        self.assertIsNotNone(manager.lookup_type(templates.parse_template_type("glm::tvec4<float>")))
+        self.assertIsNotNone(manager.lookup_type(templates.parse_template_type("glm::tvec4<int>")))
 
-        self.assertIsNone(manager.lookup_type("lua_State"))
+        self.assertIsNone(manager.lookup_type(templates.parse_template_type("lua_State")))
