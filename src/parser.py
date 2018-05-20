@@ -1,8 +1,26 @@
 import re
+import sys
+import traceback
+from typing import Optional
+
+import logger
+
+
+class ParserError(Exception):
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+
 
 try:
     from clang import cindex
     from clang.cindex import TranslationUnit, Cursor, CursorKind, Diagnostic, Config, SourceRange
+
+
+    def print_cursor(cursor: Cursor, level: int = 0):
+        print("  " * level, cursor.kind, cursor.spelling)
+        for child in cursor.get_children():
+            print_cursor(child, level + 1)
 
 
     def find_test_method(cursor):
@@ -43,6 +61,16 @@ try:
 
             return op_text
 
+        def get_unary_op(self, cursor: Cursor):
+            # libclang does not expose the unary operation in the C API...
+            arg: Cursor = next(cursor.get_children())
+
+            ext: SourceRange = arg.extent
+
+            op_text = self.content[cursor.extent.start.offset:ext.start.offset].lstrip().rstrip()
+
+            return op_text
+
         def get_cursor_text(self, cursor: Cursor) -> str:
             ext = cursor.extent
             return self.content[ext.start.offset:ext.end.offset]
@@ -59,8 +87,14 @@ try:
             elif expr_cursor.kind == CursorKind.CXX_THIS_EXPR:
                 return self.this_val
             elif expr_cursor.kind == CursorKind.MEMBER_REF_EXPR:
-                base_ref = next(expr_cursor.get_children())
-                base_val = self.get_value(base_ref)
+                base_ref = next(expr_cursor.get_children(), None)
+
+                if base_ref is None:
+                    # Some times clang inserts a "this"-expression if there is none and some times it doesn't.
+                    # If the member ref does not have a child we just assume that it is a reference to an instance field
+                    base_val = self.this_val
+                else:
+                    base_val = self.get_value(base_ref)
 
                 return base_val[expr_cursor.spelling]
             elif expr_cursor.kind == CursorKind.BINARY_OPERATOR:
@@ -88,7 +122,16 @@ try:
                 elif op == "||":
                     return left_val or right_val
                 else:
-                    return None
+                    raise ParserError("Unhandled binary operator!", op)
+            elif expr_cursor.kind == CursorKind.UNARY_OPERATOR:
+                op = self.get_unary_op(expr_cursor)
+                arg = next(expr_cursor.get_children())
+                val = self.get_value(arg)
+
+                if op == "!":
+                    return not val
+                else:
+                    raise ParserError("Unhandled unary operator!", op)
             elif expr_cursor.kind == CursorKind.CXX_BOOL_LITERAL_EXPR:
                 return self.get_cursor_text(expr_cursor) == "true"
             elif expr_cursor.kind == CursorKind.FLOATING_LITERAL:
@@ -101,47 +144,74 @@ try:
                 val = self.get_cursor_text(expr_cursor)
                 return int(val)
             else:
-                return None
+                raise ParserError("Unhandled expression kind!", expr_cursor.kind, expr_cursor.spelling)
 
 
-    def evaluate_expression(this_val, c_type: str, expr: str):
-        index = cindex.Index.create()
-
+    def _get_content(c_type: str, expr: str) -> str:
         template = """
-{base}
+        {base}
 
-struct deriv : val_type {{
-void test() {{
-{expr};
-}}
-}};
-"""
-        content = template.format(base=c_type, expr=expr)
+        struct deriv : val_type {{
+        void test() {{
+        {expr};
+        }}
+        }};
+        """
+        return template.format(base=c_type, expr=expr)
 
+
+    def _prepare_clang(content: str) -> Optional[TranslationUnit]:
+        index = cindex.Index.create()
         tu = index.parse("/tmp/file.cpp", unsaved_files=[("/tmp/file.cpp", content)])
 
         for diag in tu.diagnostics:
             if diag.severity >= Diagnostic.Error:
                 # Parsing failed
+                raise ParserError(diag.format())
+        return tu
+
+
+    def check_expression(c_type: str, expr: str) -> bool:
+        try:
+            _prepare_clang(_get_content(c_type, expr))
+            return True
+        except ParserError:
+            return False
+
+
+    def evaluate_expression(this_val, c_type: str, expr: str):
+        try:
+            content = _get_content(c_type, expr)
+            tu = _prepare_clang(content)
+
+            test_method = find_test_method(tu.cursor)
+
+            if test_method is None:
                 return None
 
-        test_method = find_test_method(tu.cursor)
+            statement = get_first_statement(test_method)
 
-        if test_method is None:
-            return None
+            if statement is None:
+                return None
 
-        statement = get_first_statement(test_method)
-
-        if statement is None:
-            return None
-
-        try:
             return ClangExpressionEvaluator(this_val, content).get_value(next(statement.get_children()))
-        except:
+        except ParserError as e:
+            logger.log_message(
+                "Failed to evaluate '{}': {}".format(expr, "".join(traceback.format_exception_only(type(e), e))))
+            raise
+        except Exception as e:
+            exc_type, exc_value, exc_tb = sys.exc_info()
+            logger.log_message(
+                "Failed to evaluate '{}': {}".format(expr, "".join(traceback.format_exception(type(e), e, exc_tb))))
             return None
 
 except ImportError:
     SPLIT_REGEX = re.compile("\.|->")
+
+
+    def check_expression(c_type: str, expr: str) -> bool:
+        # Can't do much type checking here...
+        return True
 
 
     def evaluate_expression(this_val, c_type: str, expr: str):

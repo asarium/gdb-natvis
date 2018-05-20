@@ -1,5 +1,5 @@
 import os
-from typing import Tuple, Iterable
+from typing import Tuple, Iterable, Iterator
 
 import gdb
 import gdb.printing
@@ -142,6 +142,22 @@ def strip_typedefs(type):
     return type
 
 
+def find_valid_type(iter: Iterator[natvis.NatvisType], value):
+    c_type = stringify_type(value.type, "val_type")
+
+    for t in iter:
+        valid = True
+        for expression, required in t.enumerate_expressions():
+            if required and not parser.check_expression(c_type, expression):
+                valid = False
+                break
+
+        if valid:
+            return t
+
+    return None
+
+
 class NatvisPrettyPrinter(PrettyPrinter):
     def __init__(self, name, subprinters=None):
         super().__init__(name, subprinters)
@@ -169,7 +185,7 @@ class NatvisPrettyPrinter(PrettyPrinter):
 
         filename = symbtab.filename
 
-        natvis_type = self.manager.lookup_type(template_type, filename)
+        natvis_type = find_valid_type(self.manager.lookup_types(template_type, filename), val)
 
         if natvis_type is None:
             return None

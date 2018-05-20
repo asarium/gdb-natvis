@@ -192,6 +192,23 @@ class NatvisType:
     def typename_matches(self, typename: templates.TemplateType) -> bool:
         return self.template_type.matches(typename)
 
+    def enumerate_expressions(self) -> Iterator[Tuple[str, bool]]:
+        for parser in self.display_parsers:
+            if parser.condition is not None:
+                yield parser.condition, True
+
+            for code in parser.parser.code_parts:
+                yield code.base_expression, True
+
+        if self.expand_items is None:
+            return
+
+        for expand in self.expand_items:
+            if expand.condition is not None:
+                yield expand.condition, True
+
+            yield expand.expression.base_expression, True
+
 
 def remove_namespace(doc, namespace):
     """Remove namespace in the passed document in place."""
@@ -248,7 +265,6 @@ class NatvisManager:
 
         self.loaded_types = []
         self.loaded_files = set()
-        self.unknown_types = set()  # This stores all types of which the lookup failed
 
     def load_natvis_file(self, path):
         if path in self.loaded_files:
@@ -262,14 +278,10 @@ class NatvisManager:
         for type in doc.types:
             self.loaded_types.append(type)
 
-    def lookup_type(self, typename: templates.TemplateType, filename: str = None) -> Optional[NatvisType]:
-        if typename in self.unknown_types:
-            # Quickly return if we know we won't find this type
-            return None
-
+    def lookup_types(self, typename: templates.TemplateType, filename: str = None) -> Iterator[NatvisType]:
         for loaded in self.loaded_types:
             if loaded.typename_matches(typename):
-                return loaded
+                yield loaded
 
         if filename is not None:
             self._load_natvis_files(filename)
@@ -277,11 +289,10 @@ class NatvisManager:
             # Try again with the new files
             for loaded in self.loaded_types:
                 if loaded.typename_matches(typename):
-                    return loaded
+                    yield loaded
 
-        # Type not found
-        self.unknown_types.add(typename)
-        return None
+    def lookup_type(self, typename: templates.TemplateType, filename: str = None) -> Optional[NatvisType]:
+        return next(self.lookup_types(typename, filename), None)
 
     def _load_natvis_files(self, filename):
         for natvis in _find_natvis(filename):
