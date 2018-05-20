@@ -1,9 +1,9 @@
 import os
-from typing import Tuple, Iterable, Iterator
+from typing import Tuple, Iterable, Iterator, Optional
 
 import gdb
-import gdb.printing
-import gdb.types
+import gdb.printing as gdb_printing
+import gdb.types as gdb_types
 from gdb.printing import PrettyPrinter
 
 import natvis
@@ -11,7 +11,7 @@ import parser
 from templates import TemplateType
 
 
-def format_type(type, force_name: str = None) -> Tuple[str, str]:
+def format_type(type: gdb.Type, force_name: str = None) -> Tuple[str, str]:
     if type.code == gdb.TYPE_CODE_PTR:
         target_pre, target_post = format_type(type.target())
         return target_pre + "*", target_post
@@ -46,7 +46,7 @@ def format_type(type, force_name: str = None) -> Tuple[str, str]:
         return type.name or "", ""
 
 
-def stringify_type(type, type_name: str = None):
+def stringify_type(type: gdb.Type, type_name: str = None):
     pre, post = format_type(type, type_name)
 
     return pre + post + ";"
@@ -98,7 +98,7 @@ def template_arg_to_string(arg) -> str:
         return str(arg)
 
 
-def get_template_args(type) -> Iterable[TemplateType]:
+def get_template_args(type: gdb.Type) -> Iterable[TemplateType]:
     index = 0
     while True:
         try:
@@ -109,7 +109,7 @@ def get_template_args(type) -> Iterable[TemplateType]:
         index += 1
 
 
-def gdb_to_template_type(type):
+def gdb_to_template_type(type: gdb.Type):
     type_name = template_arg_to_string(type)
     template_index = type_name.find("<")
     if template_index != -1:
@@ -118,7 +118,16 @@ def gdb_to_template_type(type):
     return TemplateType(type_name, list(get_template_args(type)))
 
 
-def strip_references(val):
+def is_void_ptr(type: gdb.Type):
+    if type.code != gdb.TYPE_CODE_PTR:
+        return False
+
+    target = type.target()
+
+    return target.code == gdb.TYPE_CODE_VOID
+
+
+def strip_references(val: gdb.Value) -> Tuple[Optional[gdb.Value], Optional[gdb.Type]]:
     """
     Removes all types of references off of val. The result is a value with a non-pointer or reference type and a value of
     the same type
@@ -126,11 +135,13 @@ def strip_references(val):
     :return: The basic value, the unqualified type of that value
     """
     while val.type.code == gdb.TYPE_CODE_REF or val.type.code == gdb.TYPE_CODE_RVALUE_REF or val.type.code == gdb.TYPE_CODE_PTR:
+        if is_void_ptr(val.type):
+            return None, None
         val = val.referenced_value()
     return val, val.type.unqualified()
 
 
-def strip_typedefs(type):
+def strip_typedefs(type: gdb.Type):
     """
     Strips typedefs off the type until the basic type is found or until the target has no name
     This is needed since natvis operates on type names.
@@ -142,7 +153,7 @@ def strip_typedefs(type):
     return type
 
 
-def find_valid_type(iter: Iterator[natvis.NatvisType], value):
+def find_valid_type(iter: Iterator[natvis.NatvisType], value: gdb.Value):
     c_type = stringify_type(value.type, "val_type")
 
     for t in iter:
@@ -163,8 +174,12 @@ class NatvisPrettyPrinter(PrettyPrinter):
         super().__init__(name, subprinters)
         self.manager = natvis.NatvisManager()
 
-    def __call__(self, val):
+    def __call__(self, val: gdb.Value):
         val, val_type = strip_references(val)
+        if val is None:
+            # Probably a void ptr
+            return None
+
         val_type = strip_typedefs(val_type)
         if not val_type:
             return None
@@ -172,7 +187,7 @@ class NatvisPrettyPrinter(PrettyPrinter):
             # We can't handle unnamed types
             return None
 
-        val_type = gdb.types.get_basic_type(val_type)
+        val_type = gdb_types.get_basic_type(val_type)
 
         symbol = gdb.lookup_symbol(val_type.name)
 
@@ -198,4 +213,4 @@ def add_natvis_printers():
         import pydevd as pydevd
         pydevd.settrace('localhost', port=41879, stdoutToServer=True, stderrToServer=True, suspend=False)
 
-    gdb.printing.register_pretty_printer(gdb.current_objfile(), NatvisPrettyPrinter("Natvis"))
+    gdb_printing.register_pretty_printer(gdb.current_objfile(), NatvisPrettyPrinter("Natvis"))

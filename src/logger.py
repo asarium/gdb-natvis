@@ -4,7 +4,7 @@ try:
 
 
     def log_message(msg: str):
-        gdb.write(msg + "\n", gdb.STDLOG)
+        gdb.write(str(msg) + "\n", gdb.STDLOG)
 except ImportError:
     def log_message(msg: str):
         print(msg)

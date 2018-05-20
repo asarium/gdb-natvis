@@ -3,6 +3,8 @@ import sys
 import traceback
 from typing import Optional
 
+import gdb
+
 import logger
 
 
@@ -179,7 +181,7 @@ try:
             return False
 
 
-    def evaluate_expression(this_val, c_type: str, expr: str):
+    def evaluate_expression(this_val: gdb.Value, c_type: str, expr: str):
         try:
             content = _get_content(c_type, expr)
             tu = _prepare_clang(content)
@@ -214,7 +216,7 @@ except ImportError:
         return True
 
 
-    def evaluate_expression(this_val, c_type: str, expr: str):
+    def evaluate_expression(this_val: gdb.Value, c_type: str, expr: str):
         try:
             current_val = this_val
             for ident in SPLIT_REGEX.split(expr):
