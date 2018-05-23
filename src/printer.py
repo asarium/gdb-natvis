@@ -1,62 +1,26 @@
 import os
+import sys
+import traceback
 from typing import Tuple, Iterable, Iterator, Optional
 
 import gdb
 import gdb.printing as gdb_printing
-import gdb.types as gdb_types
 from gdb.printing import PrettyPrinter
 
+import logger
 import natvis
 import parser
 from templates import TemplateType
-
-
-def format_type(type: gdb.Type, force_name: str = None) -> Tuple[str, str]:
-    if type.code == gdb.TYPE_CODE_PTR:
-        target_pre, target_post = format_type(type.target())
-        return target_pre + "*", target_post
-    elif type.code == gdb.TYPE_CODE_ARRAY:
-        base = type.target()
-        size = int(type.sizeof / base.sizeof)
-
-        target_pre, target_post = format_type(type.target())
-
-        return target_pre, target_post + "[" + str(size) + "]"
-    elif type.code == gdb.TYPE_CODE_STRUCT or type.code == gdb.TYPE_CODE_UNION:
-        if type.code == gdb.TYPE_CODE_STRUCT:
-            out = "struct"
-        else:
-            out = "union"
-
-        if force_name is not None:
-            out += " " + force_name
-
-        out += " {\n"
-        for f in type.fields():
-            pre, post = format_type(f.type)
-            out += "\n".join("  " + x for x in pre.splitlines())
-
-            out += (" " + f.name if f.name is not None else "") + post + ";\n"
-        out += "}"
-
-        return out, ""
-    elif type.code == gdb.TYPE_CODE_TYPEDEF:
-        return format_type(type.target(), force_name)
-    else:
-        return type.name or "", ""
-
-
-def stringify_type(type: gdb.Type, type_name: str = None):
-    pre, post = format_type(type, type_name)
-
-    return pre + post + ";"
+from type_mapping import TypeManager
+from utils import get_type_name_or_tag, get_basic_type
 
 
 class NatvisPrinter:
-    def __init__(self, type: natvis.NatvisType, val):
+    def __init__(self, parent: 'NatvisPrettyPrinter', type: natvis.NatvisType, val):
+        self.parent = parent
         self.val = val
         self.type = type
-        self.c_type = stringify_type(self.val.type, "val_type")
+        self.c_type_name, self.c_type = self.parent.type_manager.get_type_string(self.val.type)
 
     def check_condition(self, cond: str) -> bool:
         if cond is None:
@@ -65,7 +29,7 @@ class NatvisPrinter:
         return bool(self._get_value(cond))
 
     def _get_value(self, expression):
-        val = parser.evaluate_expression(self.val, self.c_type, expression)
+        val = parser.evaluate_expression(self.val, self.c_type_name, self.c_type, expression)
         if val is not None:
             return val
         else:
@@ -78,7 +42,8 @@ class NatvisPrinter:
 
         for item in self.type.expand_items:
             if self.check_condition(item.condition):
-                yield item.name, self._get_value(item.expression.base_expression)
+                value = self._get_value(item.expression.base_expression)
+                yield item.name, value
 
     def to_string(self):
         for string in self.type.display_parsers:
@@ -93,7 +58,7 @@ class NatvisPrinter:
 
 def template_arg_to_string(arg) -> str:
     if isinstance(arg, gdb.Type):
-        return arg.name
+        return get_type_name_or_tag(arg)
     else:
         return str(arg)
 
@@ -141,25 +106,13 @@ def strip_references(val: gdb.Value) -> Tuple[Optional[gdb.Value], Optional[gdb.
     return val, val.type.unqualified()
 
 
-def strip_typedefs(type: gdb.Type):
-    """
-    Strips typedefs off the type until the basic type is found or until the target has no name
-    This is needed since natvis operates on type names.
-    :param type: The type to strip typedefs off of
-    :return: The basic type
-    """
-    while type.code == gdb.TYPE_CODE_TYPEDEF and type.target().name is not None:
-        type = type.target()
-    return type
-
-
-def find_valid_type(iter: Iterator[natvis.NatvisType], value: gdb.Value):
-    c_type = stringify_type(value.type, "val_type")
+def find_valid_type(type_manager: TypeManager, iter: Iterator[natvis.NatvisType], value: gdb.Value):
+    c_type_name, c_type = type_manager.get_type_string(value.type)
 
     for t in iter:
         valid = True
         for expression, required in t.enumerate_expressions():
-            if required and not parser.check_expression(c_type, expression):
+            if required and not parser.check_expression(c_type_name, c_type, expression):
                 valid = False
                 break
 
@@ -173,39 +126,52 @@ class NatvisPrettyPrinter(PrettyPrinter):
     def __init__(self, name, subprinters=None):
         super().__init__(name, subprinters)
         self.manager = natvis.NatvisManager()
+        self.type_manager = TypeManager()
 
     def __call__(self, val: gdb.Value):
-        val, val_type = strip_references(val)
-        if val is None:
-            # Probably a void ptr
+        try:
+            val, val_type = strip_references(val)
+            if val is None:
+                # Probably a void ptr
+                return None
+
+            val_type = val_type.strip_typedefs()
+            if not val_type:
+                return None
+
+            val_type: gdb.Type = get_basic_type(val_type)
+
+            if get_type_name_or_tag(val_type) is None:
+                # We can't handle unnamed types
+                return None
+
+            if val_type.code != gdb.TYPE_CODE_UNION and val_type.code != gdb.TYPE_CODE_STRUCT:
+                # Non-structs are not handled by this printer
+                return None
+
+            template_type = gdb_to_template_type(val_type)
+
+            symbol = gdb.lookup_symbol(get_type_name_or_tag(val_type))
+
+            if symbol is None or symbol[0] is None:
+                # Hmm, basic type has no symbol table entry. Hopefully the type manager already loaded the right
+                # document for this
+                filename = None
+            else:
+                symbtab = symbol[0].symtab
+
+                filename = symbtab.filename
+
+            natvis_type = find_valid_type(self.type_manager, self.manager.lookup_types(template_type, filename), val)
+
+            if natvis_type is None:
+                return None
+
+            return NatvisPrinter(self, natvis_type, val)
+        except Exception as e:
+            exc_type, exc_value, exc_tb = sys.exc_info()
+            logger.log_message("".join(traceback.format_exception(type(e), e, exc_tb)))
             return None
-
-        val_type = strip_typedefs(val_type)
-        if not val_type:
-            return None
-        if val_type.name is None:
-            # We can't handle unnamed types
-            return None
-
-        val_type = gdb_types.get_basic_type(val_type)
-
-        symbol = gdb.lookup_symbol(val_type.name)
-
-        if symbol is None:
-            return None
-
-        template_type = gdb_to_template_type(val_type)
-
-        symbtab = symbol[0].symtab
-
-        filename = symbtab.filename
-
-        natvis_type = find_valid_type(self.manager.lookup_types(template_type, filename), val)
-
-        if natvis_type is None:
-            return None
-
-        return NatvisPrinter(natvis_type, val)
 
 
 def add_natvis_printers():

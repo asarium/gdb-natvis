@@ -28,10 +28,10 @@ try:
     def find_test_method(cursor):
         for child in cursor.get_children():
             if child.kind == CursorKind.STRUCT_DECL:
-                if child.spelling == "deriv":
+                if child.spelling == "_GdbNatvisType":
                     for method in child.get_children():
                         if method.kind == CursorKind.CXX_METHOD:
-                            if method.spelling == "test":
+                            if method.spelling == "_GdbNatvisTestFunc":
                                 return method
         return None
 
@@ -123,6 +123,14 @@ try:
                     return left_val and right_val
                 elif op == "||":
                     return left_val or right_val
+                elif op == "-":
+                    return left_val - right_val
+                elif op == "+":
+                    return left_val + right_val
+                elif op == "*":
+                    return left_val * right_val
+                elif op == "/":
+                    return left_val / right_val
                 else:
                     raise ParserError("Unhandled binary operator!", op)
             elif expr_cursor.kind == CursorKind.UNARY_OPERATOR:
@@ -149,17 +157,17 @@ try:
                 raise ParserError("Unhandled expression kind!", expr_cursor.kind, expr_cursor.spelling)
 
 
-    def _get_content(c_type: str, expr: str) -> str:
+    def _get_content(c_type_name: str, c_type: str, expr: str) -> str:
         template = """
-        {base}
+{base}
 
-        struct deriv : val_type {{
-        void test() {{
-        {expr};
-        }}
-        }};
-        """
-        return template.format(base=c_type, expr=expr)
+struct _GdbNatvisType : {type_name} {{
+void _GdbNatvisTestFunc() {{
+{expr};
+}}
+}};
+"""
+        return template.format(type_name=c_type_name, base=c_type, expr=expr)
 
 
     def _prepare_clang(content: str) -> Optional[TranslationUnit]:
@@ -173,17 +181,17 @@ try:
         return tu
 
 
-    def check_expression(c_type: str, expr: str) -> bool:
+    def check_expression(c_type_name: str, c_type: str, expr: str) -> bool:
         try:
-            _prepare_clang(_get_content(c_type, expr))
+            _prepare_clang(_get_content(c_type_name, c_type, expr))
             return True
         except ParserError:
             return False
 
 
-    def evaluate_expression(this_val: gdb.Value, c_type: str, expr: str):
+    def evaluate_expression(this_val: gdb.Value, c_type_name: str, c_type: str, expr: str):
         try:
-            content = _get_content(c_type, expr)
+            content = _get_content(c_type_name, c_type, expr)
             tu = _prepare_clang(content)
 
             test_method = find_test_method(tu.cursor)
@@ -211,12 +219,12 @@ except ImportError:
     SPLIT_REGEX = re.compile("\.|->")
 
 
-    def check_expression(c_type: str, expr: str) -> bool:
+    def check_expression(c_type_name: str, c_type: str, expr: str) -> bool:
         # Can't do much type checking here...
         return True
 
 
-    def evaluate_expression(this_val: gdb.Value, c_type: str, expr: str):
+    def evaluate_expression(this_val: gdb.Value, c_type_name: str, c_type: str, expr: str):
         try:
             current_val = this_val
             for ident in SPLIT_REGEX.split(expr):
