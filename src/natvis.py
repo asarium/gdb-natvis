@@ -185,7 +185,7 @@ class NatvisType:
             if child.tag == "DisplayString":
                 condition = child.get("Condition", None)
 
-                self.display_parsers.append(DisplayString(DisplayStringParser(child.text), condition))
+                self.display_parsers.append(DisplayString(DisplayStringParser(child.text.lstrip().rstrip()), condition))
             elif child.tag == "Expand":
                 self.expand_items = []
 
@@ -194,7 +194,7 @@ class NatvisType:
     def _parse_item_element(self, element):
         name = element.get("Name")
         condition = element.get("Condition", None)
-        expression = FormatExpression(element.text)
+        expression = FormatExpression(element.text.lstrip().rstrip())
         self.expand_items.append(ExpandItem(name, expression, condition))
 
     def _parse_index_list_items_element(self, element: Element):
@@ -204,7 +204,8 @@ class NatvisType:
         if size_el is None or value_node_el is None:
             return
 
-        self.expand_items.append(ExpandIndexListItems(element.get("Condition", None), size_el.text, value_node_el.text))
+        self.expand_items.append(ExpandIndexListItems(element.get("Condition", None), size_el.text.lstrip().rstrip(),
+                                                      value_node_el.text.lstrip().rstrip()))
 
     def _process_expand(self, element):
         for child in element:
