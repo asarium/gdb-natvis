@@ -268,7 +268,7 @@ class NatvisDocument:
                 self.types.append(NatvisType(child))
 
     @classmethod
-    def parse_file(self, path):
+    def parse_file(cls, path):
         logger.log_message("Parsing natvis document '" + path + "'")
         return NatvisDocument(ElementTree.parse(path))
 
