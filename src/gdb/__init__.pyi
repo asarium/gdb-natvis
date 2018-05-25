@@ -1,5 +1,5 @@
 from enum import Enum, auto
-from typing import Optional, Any, overload, Tuple, Iterable, Union
+from typing import Optional, Any, overload, Tuple, Iterable, Union, List
 
 
 class CodeEnum(Enum):
@@ -151,3 +151,66 @@ class Value:
     def lazy_string(self, encoding: str = None, length: int = None) -> LazyString: ...
 
     def fetch_lazy(self) -> None: ...
+
+
+class CommandClassEnum(Enum):
+    COMMAND_NONE = auto()
+    COMMAND_RUNNING = auto()
+    COMMAND_DATA = auto()
+    COMMAND_STACK = auto()
+    COMMAND_FILES = auto()
+    COMMAND_SUPPORT = auto()
+    COMMAND_STATUS = auto()
+    COMMAND_BREAKPOINTS = auto()
+    COMMAND_TRACEPOINTS = auto()
+    COMMAND_USER = auto()
+    COMMAND_OBSCURE = auto()
+    COMMAND_MAINTENANCE = auto()
+
+
+COMMAND_NONE = CommandClassEnum.COMMAND_NONE
+COMMAND_RUNNING = CommandClassEnum.COMMAND_RUNNING
+COMMAND_DATA = CommandClassEnum.COMMAND_DATA
+COMMAND_STACK = CommandClassEnum.COMMAND_STACK
+COMMAND_FILES = CommandClassEnum.COMMAND_FILES
+COMMAND_SUPPORT = CommandClassEnum.COMMAND_SUPPORT
+COMMAND_STATUS = CommandClassEnum.COMMAND_STATUS
+COMMAND_BREAKPOINTS = CommandClassEnum.COMMAND_BREAKPOINTS
+COMMAND_TRACEPOINTS = CommandClassEnum.COMMAND_TRACEPOINTS
+COMMAND_USER = CommandClassEnum.COMMAND_USER
+COMMAND_OBSCURE = CommandClassEnum.COMMAND_OBSCURE
+COMMAND_MAINTENANCE = CommandClassEnum.COMMAND_MAINTENANCE
+
+
+class CompleteEnum(Enum):
+    COMPLETE_NONE = auto()
+    COMPLETE_FILENAME = auto()
+    COMPLETE_LOCATION = auto()
+    COMPLETE_COMMAND = auto()
+    COMPLETE_SYMBOL = auto()
+    COMPLETE_EXPRESSION = auto()
+
+
+COMPLETE_NONE = CompleteEnum.COMPLETE_NONE
+COMPLETE_FILENAME = CompleteEnum.COMPLETE_FILENAME
+COMPLETE_LOCATION = CompleteEnum.COMPLETE_LOCATION
+COMPLETE_COMMAND = CompleteEnum.COMPLETE_COMMAND
+COMPLETE_SYMBOL = CompleteEnum.COMPLETE_SYMBOL
+COMPLETE_EXPRESSION = CompleteEnum.COMPLETE_EXPRESSION
+
+
+class Command:
+    def __init__(self, name: str, command_class: CommandClassEnum, completer_class: CompleteEnum = None,
+                 prefix: bool = False): ...
+
+    def dont_repeat(self) -> bool: ...
+
+    def invoke(self, argument: str, from_tty: bool) -> None: ...
+
+    def complete(self, text: str, work: str) -> Optional[Union[Iterable[str], CompleteEnum]]: ...
+
+
+PYTHONDIR: str = ...
+
+
+def string_to_argv(val: str) -> List[str]: ...

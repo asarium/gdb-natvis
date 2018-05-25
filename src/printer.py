@@ -1,7 +1,7 @@
 import os
 import sys
 import traceback
-from typing import Tuple, Iterable, Iterator, Optional
+from typing import Tuple, Iterable, Iterator, Optional, Union, Any
 
 import gdb
 import gdb.printing as gdb_printing
@@ -33,7 +33,8 @@ class GdbValueWrapper(object):
         self._wrapped_obj = obj
 
     def __str__(self) -> str:
-        return "Test"
+        vis = gdb.default_visualizer(self)
+        return vis.to_string()
 
     def __getitem__(self, item):
         return self._wrapped_obj[item]
@@ -73,6 +74,8 @@ class NatvisPrinter:
             return "{" + replaced + "}"
 
     def children(self):
+        yield "[display string]", gdb.Value(self.to_string()).cast(gdb.lookup_type("char").pointer())
+
         if self.type.expand_items is None:
             return
 
@@ -86,6 +89,9 @@ class NatvisPrinter:
                 for i in range(size):
                     val = self._get_value(item.value_node, i=str(i))
                     yield "[{}]".format(i), val
+
+    def display_hint(self):
+        return 'string'
 
     def to_string(self):
         for string in self.type.display_parsers:
@@ -192,10 +198,12 @@ def is_natvis_taget(val: gdb.Value) -> bool:
         return True
 
 
+NATVIS_MANAGER = natvis.NatvisManager()
+
+
 class NatvisPrettyPrinter(PrettyPrinter):
     def __init__(self, name, subprinters=None):
         super().__init__(name, subprinters)
-        self.manager = natvis.NatvisManager()
         self.type_manager = TypeManager()
 
     def __call__(self, val: gdb.Value):
@@ -237,7 +245,7 @@ class NatvisPrettyPrinter(PrettyPrinter):
 
                 filename = symbtab.filename
 
-            natvis_type = find_valid_type(self.type_manager, self.manager.lookup_types(template_type, filename), val)
+            natvis_type = find_valid_type(self.type_manager, NATVIS_MANAGER.lookup_types(template_type, filename), val)
 
             if natvis_type is None:
                 return None
@@ -249,6 +257,29 @@ class NatvisPrettyPrinter(PrettyPrinter):
             return None
 
 
+class AddNatvis(gdb.Command):
+
+    def __init__(self):
+        super().__init__("add-natvis", gdb.COMMAND_USER)
+
+    def invoke(self, argument: str, from_tty: bool) -> None:
+        args = gdb.string_to_argv(argument)
+
+        if len(args) <= 0:
+            print("Usage: add-nativs filename...")
+            return
+
+        for file in args:
+            global NATVIS_MANAGER
+            NATVIS_MANAGER.load_natvis_file(file)
+
+    def dont_repeat(self) -> bool:
+        return True
+
+    def complete(self, text: str, work: str) -> Optional[Union[Iterable[str], Any]]:
+        return gdb.COMPLETE_FILENAME
+
+
 def add_natvis_printers():
     if os.environ.get("GDB_NATVIS_DEBUG") is not None:
         import pydevd as pydevd
@@ -257,4 +288,5 @@ def add_natvis_printers():
         global DEBUGGING
         DEBUGGING = True
 
-    gdb_printing.register_pretty_printer(gdb.current_objfile(), NatvisPrettyPrinter("Natvis"))
+    AddNatvis()
+    gdb_printing.register_pretty_printer(None, NatvisPrettyPrinter("Natvis"))
