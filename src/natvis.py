@@ -149,15 +149,28 @@ class DisplayString:
         return "<{}: if ({!r}) {!r}>".format(self.__class__.__name__, self.condition, self.parser)
 
 
-class ExpandItem:
+class ExpandElement:
+    pass
+
+
+class ExpandItem(ExpandElement):
     def __init__(self, name: str, expression: FormatExpression, condition: str):
         self.name = name
         self.expression = expression
         self.condition = condition
 
 
+class ExpandIndexListItems(ExpandElement):
+
+    def __init__(self, condition: str, size_expr: str, value_node: str) -> None:
+        super().__init__()
+        self.condition = condition
+        self.value_node = value_node
+        self.size_expr = size_expr
+
+
 class NatvisType:
-    expand_items: List[ExpandItem]
+    expand_items: List[ExpandElement]
 
     def __init__(self, element: Element) -> None:
         super().__init__()
@@ -184,13 +197,26 @@ class NatvisType:
         expression = FormatExpression(element.text)
         self.expand_items.append(ExpandItem(name, expression, condition))
 
+    def _parse_index_list_items_element(self, element: Element):
+        size_el = element.find("Size")
+        value_node_el = element.find("ValueNode")
+
+        if size_el is None or value_node_el is None:
+            return
+
+        self.expand_items.append(ExpandIndexListItems(element.get("Condition", None), size_el.text, value_node_el.text))
+
     def _process_expand(self, element):
         for child in element:
             if child.tag == "Item":
                 self._parse_item_element(child)
+            elif child.tag == "IndexListItems":
+                self._parse_index_list_items_element(child)
 
-    def typename_matches(self, typename: templates.TemplateType) -> bool:
-        return self.template_type.matches(typename)
+    def typename_matches(self, typename: templates.TemplateType, template_args: List[str] = None) -> bool:
+        if template_args is None:
+            template_args = []
+        return self.template_type.matches(typename, template_args)
 
     def enumerate_expressions(self) -> Iterator[Tuple[str, bool]]:
         for parser in self.display_parsers:
@@ -204,10 +230,17 @@ class NatvisType:
             return
 
         for expand in self.expand_items:
-            if expand.condition is not None:
-                yield expand.condition, True
+            if isinstance(expand, ExpandItem):
+                if expand.condition is not None:
+                    yield expand.condition, True
 
-            yield expand.expression.base_expression, True
+                yield expand.expression.base_expression, True
+            elif isinstance(expand, ExpandIndexListItems):
+                if expand.condition is not None:
+                    yield expand.condition, True
+
+                yield expand.size_expr, True
+                yield expand.value_node, True
 
 
 def remove_namespace(doc, namespace):
@@ -257,6 +290,33 @@ def _find_natvis(filename: str) -> Iterator[str]:
         dir = os.path.dirname(dir)
 
 
+class NatvisTypeInstance:
+    VAR_REGEX = re.compile("\$([\d\w])+")
+
+    def __init__(self, type: NatvisType, template_args: List[str]) -> None:
+        super().__init__()
+        self.template_args = template_args
+        self.type = type
+
+    def replace_vars(self, expression: str, **kwargs: str) -> str:
+        format = NatvisTypeInstance.VAR_REGEX.sub(r"{\1}", expression)
+
+        args = {}
+        for i, arg in enumerate(self.template_args):
+            args["T" + str(i + 1)] = arg
+
+        args.update(kwargs)
+
+        return format.format(**args)
+
+    @staticmethod
+    def match_type(typename: templates.TemplateType, type: NatvisType) -> Optional['NatvisTypeInstance']:
+        args = []
+        if not type.template_type.matches(typename, args):
+            return None
+        return NatvisTypeInstance(type, args)
+
+
 class NatvisManager:
     loaded_types: List[NatvisType]
 
@@ -278,18 +338,20 @@ class NatvisManager:
         for type in doc.types:
             self.loaded_types.append(type)
 
-    def lookup_types(self, typename: templates.TemplateType, filename: str = None) -> Iterator[NatvisType]:
+    def lookup_types(self, typename: templates.TemplateType, filename: str = None) -> Iterator[NatvisTypeInstance]:
         for loaded in self.loaded_types:
-            if loaded.typename_matches(typename):
-                yield loaded
+            instance = NatvisTypeInstance.match_type(typename, loaded)
+            if instance is not None:
+                yield instance
 
         if filename is not None:
             self._load_natvis_files(filename)
 
             # Try again with the new files
             for loaded in self.loaded_types:
-                if loaded.typename_matches(typename):
-                    yield loaded
+                instance = NatvisTypeInstance.match_type(typename, loaded)
+                if instance is not None:
+                    yield instance
 
     def lookup_type(self, typename: templates.TemplateType, filename: str = None) -> Optional[NatvisType]:
         return next(self.lookup_types(typename, filename), None)

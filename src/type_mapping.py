@@ -17,10 +17,14 @@ class TypeWrapper:
         self.referencing_types = set()
 
     def __eq__(self, o: 'TypeWrapper') -> bool:
-        return str(self.type) == str(o.type)
+        left_str = self.name or str(self.type)
+        right_str = o.name or str(o.type)
+
+        return left_str == right_str
 
     def __hash__(self) -> int:
-        return hash(str(self.type))
+        val = self.name or str(self.type)
+        return hash(val)
 
     def __str__(self) -> str:
         return str(self.type)
@@ -56,6 +60,9 @@ class TypeWrapperList:
 
     def __iter__(self) -> Iterator[TypeWrapper]:
         return iter(self.type_wrapper_lookup)
+
+    def __len__(self):
+        return len(self.type_wrapper_lookup)
 
     def add_type(self, type: gdb.Type) -> TypeWrapper:
         if type in self:
@@ -106,6 +113,16 @@ class GdbTypeFormatter:
     def __init__(self) -> None:
         super().__init__()
 
+        self.type_name_mapping = {}
+
+    def get_type_name(self, name: str) -> str:
+        if name in self.type_name_mapping:
+            return self.type_name_mapping[name]
+
+        mapped_name = "_GdbType_{}".format(len(self.type_name_mapping))
+        self.type_name_mapping[name] = mapped_name
+        return mapped_name
+
     def _process_type(self, parent_type: TypeWrapper, t: gdb.Type, agg: TypeAggregator, process_fields: bool):
         t = t.strip_typedefs()
 
@@ -147,7 +164,7 @@ class GdbTypeFormatter:
 
             self._process_type_fields(wrapper, t, agg)
 
-    def topological_sort(self, agg: TypeAggregator) -> List[TypeWrapper]:
+    def _topological_sort(self, agg: TypeAggregator) -> List[TypeWrapper]:
         L = []
         S = set(x for x in agg.type_list if len(x.referencing_types) <= 0)
         while len(S) > 0:
@@ -164,10 +181,10 @@ class GdbTypeFormatter:
         return L  # Since the program was compilable there shouldn't be any cycles...
 
     def _get_type_declaration(self, t: gdb.Type):
-        if t.code == gdb.TYPE_CODE_UNION:
-            return "union " + utils.get_type_name_or_tag(t) + ";"
-        elif t.code == gdb.TYPE_CODE_STRUCT:
-            return "struct " + utils.get_type_name_or_tag(t) + ";"
+        if t.code == gdb.TYPE_CODE_UNION or t.code == gdb.TYPE_CODE_STRUCT:
+            # Unions are always written as structs
+            return "struct " + self.get_type_name(utils.get_type_name_or_tag(t)) \
+                   + "; // " + utils.get_type_name_or_tag(t)
         else:
             return str(t) + ";"
 
@@ -179,30 +196,34 @@ class GdbTypeFormatter:
 
         self._build_type_graph(agg)
 
-        sorted_types = self.topological_sort(agg)
+        sorted_types = self._topological_sort(agg)
 
         forward_decls = "\n".join(self._get_type_declaration(x.type) for x in sorted_types)
 
         decls = "\n\n".join(self._get_type_string(x.type) for x in sorted_types)
 
-        return utils.get_type_name_or_tag(t), forward_decls + "\n\n" + decls
+        return self.get_type_name(utils.get_type_name_or_tag(t)), forward_decls + "\n\n" + decls
 
     def _get_type_string(self, t: gdb.Type) -> str:
-        pre, post = self._format_type(t, utils.get_type_name_or_tag(t))
+        pre, post = self._format_type(t, self.get_type_name(utils.get_type_name_or_tag(t)))
 
-        type_text = pre + post + ";"
+        type_text = "// " + utils.get_type_name_or_tag(t) + "\n" + pre + post + ";"
 
         return type_text
 
     def _format_struct(self, type: gdb.Type, force_name: str = None) -> Tuple[str, str]:
         if utils.get_type_name_or_tag(type) is not None and force_name is None:
-            # Named structs are handled by adding a new type to the aggregator
-            return utils.get_type_name_or_tag(type), ""
+            # Named types are not expanded since they are declared before this type
+            return self.get_type_name(utils.get_type_name_or_tag(type)), ""
         else:
-            if type.code == gdb.TYPE_CODE_STRUCT:
+            if force_name is not None:
+                # Named types are always written as structs since they need to be subclassable
                 out = "struct"
             else:
-                out = "union"
+                if type.code == gdb.TYPE_CODE_UNION:
+                    out = "union"
+                else:
+                    out = "struct"
 
             if force_name is not None:
                 out += " " + force_name

@@ -1,7 +1,7 @@
 import re
 import sys
 import traceback
-from typing import Optional
+from typing import Optional, Union
 
 import gdb
 
@@ -16,7 +16,7 @@ class ParserError(Exception):
 
 try:
     from clang import cindex
-    from clang.cindex import TranslationUnit, Cursor, CursorKind, Diagnostic, Config, SourceRange
+    from clang.cindex import TranslationUnit, Cursor, CursorKind, Diagnostic, Config, SourceRange, TypeKind
 
 
     def print_cursor(cursor: Cursor, level: int = 0):
@@ -44,10 +44,24 @@ try:
         return None
 
 
+    def convert_clang_to_gdb_type(t: cindex.Type) -> gdb.Type:
+        if t.kind == TypeKind.POINTER:
+            return convert_clang_to_gdb_type(t.get_pointee()).pointer()
+        if t.kind == TypeKind.CHAR_S:
+            return gdb.lookup_type("char")
+        else:
+            raise ParserError("Unhandled pointer type!", t.kind, t.spelling)
+
+
     class ClangExpressionEvaluator:
-        def __init__(self, this_val, content: str):
+        def __init__(self, this_val: gdb.Value, content: str):
             self.content = content
-            self.this_val = this_val
+
+            if this_val.type.code != gdb.TYPE_CODE_PTR:
+                # this must always be a pointer
+                self.this_val = this_val.address
+            else:
+                self.this_val = this_val
 
         def get_binary_op(self, binary_cursor: Cursor):
             # libclang does not expose the binary operation in the C API. There is a patch for that
@@ -77,7 +91,7 @@ try:
             ext = cursor.extent
             return self.content[ext.start.offset:ext.end.offset]
 
-        def get_value(self, expr_cursor: Cursor):
+        def get_value(self, expr_cursor: Cursor) -> Optional[Union[gdb.Value, bool, str, int, float]]:
             if expr_cursor.kind == CursorKind.UNEXPOSED_EXPR:
                 # Unexposed expression found, let's hope it's not something serious...
                 children = list(expr_cursor.get_children())
@@ -130,16 +144,28 @@ try:
                 elif op == "*":
                     return left_val * right_val
                 elif op == "/":
+                    if isinstance(left_val, int) and isinstance(right_val, int):
+                        return left_val // right_val
                     return left_val / right_val
+                elif op == "<<":
+                    return left_val << right_val
+                elif op == ">>":
+                    return left_val << right_val
                 else:
                     raise ParserError("Unhandled binary operator!", op)
-            elif expr_cursor.kind == CursorKind.UNARY_OPERATOR:
+            elif expr_cursor.kind == CursorKind.UNARY_OPERATOR or expr_cursor.kind == CursorKind.CXX_UNARY_EXPR:
                 op = self.get_unary_op(expr_cursor)
                 arg = next(expr_cursor.get_children())
                 val = self.get_value(arg)
 
                 if op == "!":
                     return not val
+                elif op == "&":
+                    return val.address
+                elif op == "*":
+                    return val.dereference()
+                elif op == "sizeof":
+                    return val.type.sizeof
                 else:
                     raise ParserError("Unhandled unary operator!", op)
             elif expr_cursor.kind == CursorKind.CXX_BOOL_LITERAL_EXPR:
@@ -153,6 +179,29 @@ try:
             elif expr_cursor.kind == CursorKind.INTEGER_LITERAL:
                 val = self.get_cursor_text(expr_cursor)
                 return int(val)
+            elif expr_cursor.kind == CursorKind.ARRAY_SUBSCRIPT_EXPR:
+                children = expr_cursor.get_children()
+                base = next(children)
+                index = next(children)
+
+                base_val = self.get_value(base)
+                index_val = self.get_value(index)
+
+                ptr_val = base_val.cast(gdb.lookup_type("intptr_t"))
+
+                base_size = base_val.type.target().sizeof
+
+                result_ptr = ptr_val + index_val * base_size
+                result_val = result_ptr.cast(base_val.type).dereference()
+
+                return result_val
+            elif expr_cursor.kind == CursorKind.CSTYLE_CAST_EXPR:
+                gdb_t = convert_clang_to_gdb_type(expr_cursor.type.get_canonical())
+                target_val_expr = next(expr_cursor.get_children())
+                target_val = self.get_value(target_val_expr)
+                return target_val.cast(gdb_t)
+            elif expr_cursor.kind == CursorKind.PAREN_EXPR:
+                return self.get_value(next(expr_cursor.get_children()))
             else:
                 raise ParserError("Unhandled expression kind!", expr_cursor.kind, expr_cursor.spelling)
 
@@ -205,6 +254,8 @@ void _GdbNatvisTestFunc() {{
                 return None
 
             return ClangExpressionEvaluator(this_val, content).get_value(next(statement.get_children()))
+        except gdb.MemoryError as e:
+            return str(e)
         except ParserError as e:
             logger.log_message(
                 "Failed to evaluate '{}': {}".format(expr, "".join(traceback.format_exception_only(type(e), e))))

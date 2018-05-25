@@ -70,3 +70,7 @@ def get_type_name_or_tag(t: gdb.Type) -> Optional[str]:
     if t.tag is not None:
         return t.tag
     return None
+
+
+def is_pointer(t: gdb.Type) -> bool:
+    return t.code == gdb.TYPE_CODE_PTR

@@ -34,16 +34,18 @@ class TemplateType:
         else:
             return '{}<{}>'.format(self.name, ", ".join(str(x) for x in self.args))
 
-    def matches(self, other: 'TemplateType') -> bool:
+    def matches(self, other: 'TemplateType', matched_args: List[str] = None) -> bool:
         if self.is_wildcard:
             # All names match with wildcards
+            if matched_args is not None:
+                matched_args.append(other.name)
             return True
 
         if len(self.args) != len(other.args):
             return False
 
         for left, right in zip(self.args, other.args):
-            if not left.matches(right):
+            if not left.matches(right, matched_args):
                 return False
 
         return self.name == other.name

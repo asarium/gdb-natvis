@@ -95,3 +95,11 @@ class TemplateParserTestCase(unittest.TestCase):
     def test_empty_comma_comma_arg(self):
         with self.assertRaises(TemplateException):
             templates.parse_template_type("test::template_class<float,,>")
+
+    def test_template_arg_matching(self):
+        template_type = templates.parse_template_type("test::template_class<vector<*>, *>")
+        arglist = []
+        self.assertTrue(
+            template_type.matches(templates.parse_template_type("test::template_class<vector<int>, test>"), arglist))
+
+        self.assertListEqual(["int", "test"], arglist)
