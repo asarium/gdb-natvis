@@ -51,7 +51,7 @@ class GdbValueWrapper(object):
 
 
 class NatvisPrinter:
-    def __init__(self, parent: 'NatvisPrettyPrinter', instance: natvis.NatvisTypeInstance, val):
+    def __init__(self, parent: 'NatvisPrettyPrinter', instance: natvis.NatvisTypeInstance, val: gdb.Value):
         self.instance = instance
         self.parent = parent
         self.val = val
@@ -62,57 +62,22 @@ class NatvisPrinter:
         if cond is None:
             return True
 
-        return bool(self._get_value(cond))
+        return self._get_value(cond, bool)
 
-    def _get_value(self, expression, **kwargs: str):
+    def _get_value(self, expression, convert_func=None, **kwargs: str):
         replaced = self.instance.replace_vars(expression, **kwargs)
         val = parser.evaluate_expression(self.val, self.c_type_name, self.c_type, replaced)
         if val is not None:
-            return val
+            if convert_func is not None:
+                try:
+                    return convert_func(val)
+                except:
+                    return None
+            else:
+                return val
         else:
             # Return the expression as a string in case the execution failed
             return "{" + replaced + "}"
-
-    def children(self):
-        yield "[display string]", gdb.Value(self.to_string()).cast(gdb.lookup_type("char").pointer())
-
-        if self.type.expand_items is None:
-            return
-
-        for item in self.type.expand_items:
-            if isinstance(item, natvis.ExpandItem):
-                if self.check_condition(item.condition):
-                    value = self._get_value(item.expression.base_expression)
-                    yield item.name, value
-            elif isinstance(item, natvis.ExpandIndexListItems):
-                if self.check_condition(item.condition):
-                    size = self._get_value(item.size_expr)
-                    for i in range(size):
-                        val = self._get_value(item.value_node, i=str(i))
-                        yield "[{}]".format(i), val
-            elif isinstance(item, natvis.ExpandArrayItems):
-                if self.check_condition(item.condition):
-                    size = self._get_value(item.size_expr)
-                    current_val = self._get_value(item.value_ptr_expr)
-                    for i in range(size):
-                        yield "[{}]".format(i), current_val.dereference()
-                        current_val = current_val + 1
-            elif isinstance(item, natvis.ExpandExpandedItem):
-                if self.check_condition(item.condition):
-                    item = self._get_value(item.expression)
-                    visualizer = gdb.default_visualizer(item)
-                    if visualizer is not None:
-                        if isinstance(visualizer, NatvisPrinter):
-                            for name, val in visualizer.children():
-                                # Remove the display string child since that only exists for fixing the MI issues
-                                if name != "[display string]":
-                                    yield name, val
-                        else:
-                            try:
-                                yield from visualizer.children()
-                            except AttributeError:
-                                # Make sure we don't break the iteration if the child visualizer does not have this function
-                                pass
 
     def display_hint(self):
         return 'string'
@@ -132,6 +97,76 @@ class NatvisPrinter:
                 return string.parser.template_string.format(*display_args)
 
         return "No visualizer available"
+
+    def children(self):
+        yield "[display string]", gdb.Value(self.to_string()).cast(gdb.lookup_type("char").pointer())
+
+        if self.type.expand_items is None:
+            return
+
+        for item in self.type.expand_items:
+            if isinstance(item, natvis.ExpandItem):
+                yield from self._expand_item_children(item)
+            elif isinstance(item, natvis.ExpandIndexListItems):
+                yield from self._expand_index_list_items(item)
+            elif isinstance(item, natvis.ExpandArrayItems):
+                yield from self._expand_array_items(item)
+            elif isinstance(item, natvis.ExpandExpandedItem):
+                yield from self._expand_expanded_item(item)
+
+    def _expand_expanded_item(self, item: natvis.ExpandExpandedItem):
+        if self.check_condition(item.condition):
+            item = self._get_value(item.expression)
+            visualizer = gdb.default_visualizer(item)
+            if visualizer is not None:
+                if isinstance(visualizer, NatvisPrinter):
+                    first = True
+                    for name, val in visualizer.children():
+                        if first:
+                            # Remove the display string child since that only exists for fixing the MI issues
+                            first = False
+                            continue
+                        yield name, val
+                else:
+                    try:
+                        yield from visualizer.children()
+                    except AttributeError:
+                        # Make sure we don't break the iteration if the child visualizer does not have this function
+                        pass
+
+    def _expand_item_children(self, item: natvis.ExpandItem):
+        if self.check_condition(item.condition):
+            value = self._get_value(item.expression.base_expression)
+            yield item.name, value
+
+    def _expand_index_list_items(self, item: natvis.ExpandIndexListItems):
+        if not self.check_condition(item.condition):
+            return
+
+        size: int = self._get_value(item.size_expr, int)
+
+        if size is None:
+            # The size node has an invalid value
+            return
+
+        for i in range(size):
+            val = self._get_value(item.value_node, i=str(i))
+            yield "[{}]".format(i), val
+
+    def _expand_array_items(self, item: natvis.ExpandArrayItems):
+        if self.check_condition(item.condition):
+            return
+
+        size: int = self._get_value(item.size_expr, int)
+
+        if size is None:
+            # The size node has an invalid value
+            return
+
+        current_val = self._get_value(item.value_ptr_expr)
+        for i in range(size):
+            yield "[{}]".format(i), current_val.dereference()
+            current_val = current_val + 1
 
 
 def template_arg_to_string(arg) -> str:
