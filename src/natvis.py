@@ -187,6 +187,13 @@ class ExpandExpandedItem(ExpandElement):
         self.condition = condition
 
 
+class ExpandSynthetic(ExpandElement):
+
+    def __init__(self, type: 'NatvisType') -> None:
+        super().__init__()
+        self.type = type
+
+
 class NatvisType:
     expand_items: List[ExpandElement]
 
@@ -239,6 +246,10 @@ class NatvisType:
         expr = element.text.lstrip().rstrip()
         self.expand_items.append(ExpandExpandedItem(element.get("Condition", None), expr))
 
+    def _parse_synthetic_item(self, element):
+        parsed = NatvisType(element)
+        self.expand_items.append(ExpandSynthetic(parsed))
+
     def _process_expand(self, element):
         for child in element:
             if child.tag == "Item":
@@ -249,6 +260,8 @@ class NatvisType:
                 self._parse_array_items_element(child)
             elif child.tag == "ExpandedItem":
                 self._parse_expanded_item(child)
+            elif child.tag == "Synthetic":
+                self._parse_synthetic_item(child)
 
     def typename_matches(self, typename: templates.TemplateType, template_args: List[str] = None) -> bool:
         if template_args is None:
@@ -288,6 +301,8 @@ class NatvisType:
                 if expand.condition is not None:
                     yield expand.condition, True
                 yield expand.expression, True
+            elif isinstance(expand, ExpandSynthetic):
+                yield from expand.type.enumerate_expressions()
 
 
 def remove_namespace(doc, namespace):

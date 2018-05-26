@@ -42,6 +42,8 @@ This already supports a wide array of features available in the Natvis system:
   - `ArrayItems` is supported for the simple case (`Size` and `ValuePointer`)
   - `IndexListItems` including `$i` parameters
   - `ExpandedItem`
+  - Limited support for `Synthetic`. Only the display string part is supported since synthetic items are not possible
+  with the current GDB API
 
 ## Known issues
 - The expression parser does not support all syntax elements yet

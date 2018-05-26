@@ -82,8 +82,8 @@ class NatvisPrinter:
     def display_hint(self):
         return 'string'
 
-    def to_string(self):
-        for string in self.type.display_parsers:
+    def _get_natvis_type_display_string(self, t: natvis.NatvisType):
+        for string in t.display_parsers:
             if self.check_condition(string.condition):
                 display_args = []
                 for code in string.parser.code_parts:
@@ -97,6 +97,9 @@ class NatvisPrinter:
                 return string.parser.template_string.format(*display_args)
 
         return "No visualizer available"
+
+    def to_string(self):
+        return self._get_natvis_type_display_string(self.type)
 
     def children(self):
         yield "[display string]", gdb.Value(self.to_string()).cast(gdb.lookup_type("char").pointer())
@@ -113,6 +116,11 @@ class NatvisPrinter:
                 yield from self._expand_array_items(item)
             elif isinstance(item, natvis.ExpandExpandedItem):
                 yield from self._expand_expanded_item(item)
+            elif isinstance(item, natvis.ExpandSynthetic):
+                yield from self._expand_synthetic_item(item)
+
+    def _expand_synthetic_item(self, item: natvis.ExpandSynthetic):
+        yield str(item.type.template_type), self._get_natvis_type_display_string(item.type)
 
     def _expand_expanded_item(self, item: natvis.ExpandExpandedItem):
         if self.check_condition(item.condition):
