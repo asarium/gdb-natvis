@@ -89,6 +89,12 @@ class NatvisPrinter:
                 for i in range(size):
                     val = self._get_value(item.value_node, i=str(i))
                     yield "[{}]".format(i), val
+            elif isinstance(item, natvis.ExpandArrayItems):
+                size = self._get_value(item.size_expr)
+                current_val = self._get_value(item.value_ptr_expr)
+                for i in range(size):
+                    yield "[{}]".format(i), current_val.dereference()
+                    current_val = current_val + 1
 
     def display_hint(self):
         return 'string'
