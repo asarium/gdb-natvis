@@ -85,16 +85,34 @@ class NatvisPrinter:
                     value = self._get_value(item.expression.base_expression)
                     yield item.name, value
             elif isinstance(item, natvis.ExpandIndexListItems):
-                size = self._get_value(item.size_expr)
-                for i in range(size):
-                    val = self._get_value(item.value_node, i=str(i))
-                    yield "[{}]".format(i), val
+                if self.check_condition(item.condition):
+                    size = self._get_value(item.size_expr)
+                    for i in range(size):
+                        val = self._get_value(item.value_node, i=str(i))
+                        yield "[{}]".format(i), val
             elif isinstance(item, natvis.ExpandArrayItems):
-                size = self._get_value(item.size_expr)
-                current_val = self._get_value(item.value_ptr_expr)
-                for i in range(size):
-                    yield "[{}]".format(i), current_val.dereference()
-                    current_val = current_val + 1
+                if self.check_condition(item.condition):
+                    size = self._get_value(item.size_expr)
+                    current_val = self._get_value(item.value_ptr_expr)
+                    for i in range(size):
+                        yield "[{}]".format(i), current_val.dereference()
+                        current_val = current_val + 1
+            elif isinstance(item, natvis.ExpandExpandedItem):
+                if self.check_condition(item.condition):
+                    item = self._get_value(item.expression)
+                    visualizer = gdb.default_visualizer(item)
+                    if visualizer is not None:
+                        if isinstance(visualizer, NatvisPrinter):
+                            for name, val in visualizer.children():
+                                # Remove the display string child since that only exists for fixing the MI issues
+                                if name != "[display string]":
+                                    yield name, val
+                        else:
+                            try:
+                                yield from visualizer.children()
+                            except AttributeError:
+                                # Make sure we don't break the iteration if the child visualizer does not have this function
+                                pass
 
     def display_hint(self):
         return 'string'

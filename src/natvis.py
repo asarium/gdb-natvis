@@ -179,6 +179,14 @@ class ExpandIndexListItems(ExpandElement):
         self.size_expr = size_expr
 
 
+class ExpandExpandedItem(ExpandElement):
+
+    def __init__(self, condition: str, expression: str):
+        super().__init__()
+        self.expression = expression
+        self.condition = condition
+
+
 class NatvisType:
     expand_items: List[ExpandElement]
 
@@ -227,6 +235,10 @@ class NatvisType:
         self.expand_items.append(ExpandArrayItems(element.get("Condition", None), size_el.text.lstrip().rstrip(),
                                                   value_node_el.text.lstrip().rstrip()))
 
+    def _parse_expanded_item(self, element):
+        expr = element.text.lstrip().rstrip()
+        self.expand_items.append(ExpandExpandedItem(element.get("Condition", None), expr))
+
     def _process_expand(self, element):
         for child in element:
             if child.tag == "Item":
@@ -235,6 +247,8 @@ class NatvisType:
                 self._parse_index_list_items_element(child)
             elif child.tag == "ArrayItems":
                 self._parse_array_items_element(child)
+            elif child.tag == "ExpandedItem":
+                self._parse_expanded_item(child)
 
     def typename_matches(self, typename: templates.TemplateType, template_args: List[str] = None) -> bool:
         if template_args is None:
@@ -258,12 +272,22 @@ class NatvisType:
                     yield expand.condition, True
 
                 yield expand.expression.base_expression, True
-            elif isinstance(expand, ExpandIndexListItems) or isinstance(expand, ExpandArrayItems):
+            elif isinstance(expand, ExpandIndexListItems):
+                if expand.condition is not None:
+                    yield expand.condition, True
+
+                yield expand.size_expr, True
+                yield expand.value_node, True
+            elif isinstance(expand, ExpandArrayItems):
                 if expand.condition is not None:
                     yield expand.condition, True
 
                 yield expand.size_expr, True
                 yield expand.value_ptr_expr, True
+            elif isinstance(expand, ExpandExpandedItem):
+                if expand.condition is not None:
+                    yield expand.condition, True
+                yield expand.expression, True
 
 
 def remove_namespace(doc, namespace):
